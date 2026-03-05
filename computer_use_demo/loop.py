@@ -2,11 +2,13 @@
 Agentic sampling loop that calls the Anthropic API and local implementation of anthropic-defined computer use tools.
 """
 
+import os
 import platform
 from collections.abc import Callable
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, cast
+
+from .compat import StrEnum
 
 import httpx
 from anthropic import (
@@ -39,15 +41,27 @@ PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
 
 class APIProvider(StrEnum):
     ANTHROPIC = "anthropic"
+    KILO = "kilo"
     BEDROCK = "bedrock"
     VERTEX = "vertex"
 
 
 PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {
     APIProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
+    APIProvider.KILO: "claude-3-5-sonnet-20241022",
     APIProvider.BEDROCK: "anthropic.claude-3-5-sonnet-20241022-v2:0",
     APIProvider.VERTEX: "claude-3-5-sonnet-v2@20241022",
 }
+
+def normalize_provider(provider: APIProvider | str) -> APIProvider:
+    """Normalize raw provider values to ``APIProvider`` with validation."""
+    if isinstance(provider, APIProvider):
+        return provider
+    try:
+        return APIProvider(provider)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported API provider: {provider}") from exc
+
 
 
 # This system prompt is optimized for the Docker environment in this repository and
@@ -89,7 +103,23 @@ async def sampling_loop(
     max_tokens: int = 4096,
 ):
     """
-    Agentic sampling loop for the assistant/tool interaction of computer use.
+    Run the agentic sampling loop that sends the conversation and system prompt to the model, executes any tool uses returned by the model, and appends tool results back into the conversation.
+    
+    Parameters:
+        desktop (DesktopSandbox): Local sandbox used by tools for executing actions.
+        model (str): Model name to use for API requests.
+        provider (APIProvider | str): API provider or provider name to use; will be normalized.
+        system_prompt_suffix (str): Additional text appended to the system prompt.
+        messages (list[BetaMessageParam]): Current conversation message list that will be sent and mutated.
+        output_callback (Callable[[BetaContentBlockParam], None]): Called for each content block produced by the model.
+        tool_output_callback (Callable[[ToolResult, str], None]): Called with each ToolResult and its tool_use identifier after tool execution.
+        api_response_callback (Callable[[httpx.Request, httpx.Response | object | None, Exception | None], None]): Receives the raw HTTP request/response or exception for each API call.
+        api_key (str): API key or credential used to instantiate provider clients.
+        only_n_most_recent_images (int | None): If set, prune tool_result image blocks to retain only this many most recent images across the conversation.
+        max_tokens (int): Maximum token budget for the model request.
+    
+    Returns:
+        list[BetaMessageParam]: The updated conversation messages after processing the model response and any tool results.
     """
     tool_collection = ToolCollection(
         ComputerTool(desktop),
@@ -102,16 +132,25 @@ async def sampling_loop(
     )
 
     while True:
+        provider = normalize_provider(provider)
         enable_prompt_caching = False
         betas = [COMPUTER_USE_BETA_FLAG]
         image_truncation_threshold = 10
         if provider == APIProvider.ANTHROPIC:
             client = Anthropic(api_key=api_key)
             enable_prompt_caching = True
+        elif provider == APIProvider.KILO:
+            client = Anthropic(
+                api_key=api_key,
+                base_url=os.getenv("KILO_API_BASE_URL", "https://api.kilo.ai/anthropic"),
+            )
+            enable_prompt_caching = True
         elif provider == APIProvider.VERTEX:
             client = AnthropicVertex()
         elif provider == APIProvider.BEDROCK:
             client = AnthropicBedrock()
+        else:
+            raise ValueError(f"Unsupported API provider: {provider}")
 
         if enable_prompt_caching:
             betas.append(PROMPT_CACHING_BETA_FLAG)

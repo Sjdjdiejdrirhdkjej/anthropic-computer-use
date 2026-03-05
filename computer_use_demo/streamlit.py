@@ -8,10 +8,11 @@ import os
 import subprocess
 import traceback
 from datetime import datetime, timedelta
-from enum import StrEnum
 from functools import partial
 from pathlib import PosixPath
 from typing import cast
+
+from computer_use_demo.compat import StrEnum
 
 import httpx
 import streamlit as st
@@ -57,16 +58,35 @@ class Sender(StrEnum):
 
 
 def setup_state():
+    """
+    Initialize required keys in the Streamlit session state for the app's UI, authentication, model/provider configuration, stored responses/tools, and local sandbox.
+    
+    Sets up the following session state keys when absent:
+    - messages: list of chat messages.
+    - api_key: API key loaded from storage or environment fallbacks.
+    - provider: coerced API provider selection.
+    - provider_radio: UI-facing provider selection mirror.
+    - model: model name for the selected provider (via reset helper).
+    - auth_validated: boolean tracking whether credentials were validated.
+    - responses: mapping of stored HTTP request/response exchanges.
+    - tools: storage for tool outputs/state.
+    - only_n_most_recent_images: integer limit for sending recent images.
+    - custom_system_prompt: optional system prompt suffix loaded from storage.
+    - hide_images: boolean to hide image outputs in the UI.
+    - desktop: DesktopSandbox instance for local sandbox operations.
+    """
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "api_key" not in st.session_state:
         # Try to load API key from file first, then environment
-        st.session_state.api_key = load_from_storage("api_key") or os.getenv(
-            "ANTHROPIC_API_KEY", ""
+        st.session_state.api_key = (
+            load_from_storage("api_key")
+            or os.getenv("ANTHROPIC_API_KEY", "")
+            or os.getenv("KILO_API_KEY", "")
         )
     if "provider" not in st.session_state:
-        st.session_state.provider = (
-            os.getenv("API_PROVIDER", "anthropic") or APIProvider.ANTHROPIC
+        st.session_state.provider = _coerce_provider(
+            os.getenv("API_PROVIDER", APIProvider.ANTHROPIC.value)
         )
     if "provider_radio" not in st.session_state:
         st.session_state.provider_radio = st.session_state.provider
@@ -88,14 +108,41 @@ def setup_state():
         st.session_state.desktop = DesktopSandbox()
 
 
+def _coerce_provider(provider: str | APIProvider) -> APIProvider:
+    """
+    Normalize a provider identifier to an APIProvider enum.
+    
+    Parameters:
+        provider (str | APIProvider): A provider name or an existing APIProvider value.
+    
+    Returns:
+        api_provider (APIProvider): The corresponding APIProvider; returns APIProvider.ANTHROPIC when the input cannot be mapped.
+    """
+    if isinstance(provider, APIProvider):
+        return provider
+    try:
+        return APIProvider(provider)
+    except ValueError:
+        return APIProvider.ANTHROPIC
+
+
 def _reset_model():
-    st.session_state.model = PROVIDER_TO_DEFAULT_MODEL_NAME[
-        cast(APIProvider, st.session_state.provider)
-    ]
+    """
+    Set the session state's provider to a normalized APIProvider and update the model to that provider's default.
+    
+    Updates st.session_state.provider with a coerced APIProvider value and sets st.session_state.model to the corresponding default model from PROVIDER_TO_DEFAULT_MODEL_NAME.
+    """
+    provider = _coerce_provider(st.session_state.provider)
+    st.session_state.provider = provider
+    st.session_state.model = PROVIDER_TO_DEFAULT_MODEL_NAME[provider]
 
 
 async def main():
-    """Render loop for streamlit"""
+    """
+    Render the Streamlit UI and drive the interactive chat and HTTP-exchange workflow.
+    
+    Initializes session state and UI (sidebar controls, model/provider selection, API key input, image and prompt settings), validates authentication, replays and renders past chat messages and HTTP exchanges, accepts new user input, and invokes the agent sampling loop to produce and render bot and tool outputs in real time. Exposes a Reset action that clears session state and restarts local sandbox processes.
+    """
     setup_state()
 
     st.markdown(STREAMLIT_STYLE, unsafe_allow_html=True)
@@ -111,9 +158,16 @@ async def main():
     with st.sidebar:
 
         def _reset_api_provider():
+            """
+            Update the current API provider when the sidebar selection changes.
+            
+            If the provider selection control differs from the stored provider, set the session's provider to the coerced selection, reset the model to the provider's default, and mark authentication as not validated.
+            """
             if st.session_state.provider_radio != st.session_state.provider:
+                st.session_state.provider = _coerce_provider(
+                    st.session_state.provider_radio
+                )
                 _reset_model()
-                st.session_state.provider = st.session_state.provider_radio
                 st.session_state.auth_validated = False
 
         provider_options = [option.value for option in APIProvider]
@@ -130,6 +184,13 @@ async def main():
         if st.session_state.provider == APIProvider.ANTHROPIC:
             st.text_input(
                 "Anthropic API Key",
+                type="password",
+                key="api_key",
+                on_change=lambda: save_to_storage("api_key", st.session_state.api_key),
+            )
+        elif st.session_state.provider == APIProvider.KILO:
+            st.text_input(
+                "Kilo API Key",
                 type="password",
                 key="api_key",
                 on_change=lambda: save_to_storage("api_key", st.session_state.api_key),
@@ -238,10 +299,24 @@ async def main():
             )
 
 
-def validate_auth(provider: APIProvider, api_key: str | None):
+def validate_auth(provider: APIProvider | str, api_key: str | None):
+    """
+    Validate that required credentials are available for the selected API provider.
+    
+    Parameters:
+        provider (APIProvider | str): Provider identifier (enum or string). The value will be coerced to an APIProvider.
+        api_key (str | None): API key to validate for providers that require a key (Anthropic, Kilo).
+    
+    Returns:
+        str | None: An error message describing missing or misconfigured credentials when validation fails, or `None` if credentials are valid.
+    """
+    provider = _coerce_provider(provider)
     if provider == APIProvider.ANTHROPIC:
         if not api_key:
             return "Enter your Anthropic API key in the sidebar to continue."
+    if provider == APIProvider.KILO:
+        if not api_key:
+            return "Enter your Kilo API key in the sidebar to continue."
     if provider == APIProvider.BEDROCK:
         import boto3
 
