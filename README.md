@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/07d42297-27f1-4119-8f4c-c102bf205b10
 
 - [git](https://git-scm.com/)
 - [E2B API key](https://e2b.dev/dashboard?tab=keys)
-- [Anthropic API key](https://console.anthropic.com/settings/keys)
+- [Anthropic API key](https://console.anthropic.com/settings/keys) (or Kilo API key for Kilo provider)
 
 ### 1. Install the prerequisites
 
@@ -43,6 +43,10 @@ Create a `.env` file in `secure-computer-use` and set the following:
 ```sh
 # Get your API key here - https://e2b.dev/
 E2B_API_KEY="your-e2b-api-key"
+# Optional: used when selecting API Provider = Kilo in the app
+KILO_API_KEY="your-kilo-api-key"
+# Optional: override Kilo Anthropic-compatible base URL
+KILO_API_BASE_URL="https://api.kilo.ai/anthropic"
 ```
 
 ### 4. Start the web interface

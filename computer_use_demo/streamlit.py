@@ -8,10 +8,11 @@ import os
 import subprocess
 import traceback
 from datetime import datetime, timedelta
-from enum import StrEnum
 from functools import partial
 from pathlib import PosixPath
 from typing import cast
+
+from computer_use_demo.compat import StrEnum
 
 import httpx
 import streamlit as st
@@ -61,12 +62,14 @@ def setup_state():
         st.session_state.messages = []
     if "api_key" not in st.session_state:
         # Try to load API key from file first, then environment
-        st.session_state.api_key = load_from_storage("api_key") or os.getenv(
-            "ANTHROPIC_API_KEY", ""
+        st.session_state.api_key = (
+            load_from_storage("api_key")
+            or os.getenv("ANTHROPIC_API_KEY", "")
+            or os.getenv("KILO_API_KEY", "")
         )
     if "provider" not in st.session_state:
-        st.session_state.provider = (
-            os.getenv("API_PROVIDER", "anthropic") or APIProvider.ANTHROPIC
+        st.session_state.provider = _coerce_provider(
+            os.getenv("API_PROVIDER", APIProvider.ANTHROPIC.value)
         )
     if "provider_radio" not in st.session_state:
         st.session_state.provider_radio = st.session_state.provider
@@ -88,10 +91,20 @@ def setup_state():
         st.session_state.desktop = DesktopSandbox()
 
 
+def _coerce_provider(provider: str | APIProvider) -> APIProvider:
+    """Coerce provider values from state/env to a supported provider."""
+    if isinstance(provider, APIProvider):
+        return provider
+    try:
+        return APIProvider(provider)
+    except ValueError:
+        return APIProvider.ANTHROPIC
+
+
 def _reset_model():
-    st.session_state.model = PROVIDER_TO_DEFAULT_MODEL_NAME[
-        cast(APIProvider, st.session_state.provider)
-    ]
+    provider = _coerce_provider(st.session_state.provider)
+    st.session_state.provider = provider
+    st.session_state.model = PROVIDER_TO_DEFAULT_MODEL_NAME[provider]
 
 
 async def main():
@@ -112,8 +125,10 @@ async def main():
 
         def _reset_api_provider():
             if st.session_state.provider_radio != st.session_state.provider:
+                st.session_state.provider = _coerce_provider(
+                    st.session_state.provider_radio
+                )
                 _reset_model()
-                st.session_state.provider = st.session_state.provider_radio
                 st.session_state.auth_validated = False
 
         provider_options = [option.value for option in APIProvider]
@@ -130,6 +145,13 @@ async def main():
         if st.session_state.provider == APIProvider.ANTHROPIC:
             st.text_input(
                 "Anthropic API Key",
+                type="password",
+                key="api_key",
+                on_change=lambda: save_to_storage("api_key", st.session_state.api_key),
+            )
+        elif st.session_state.provider == APIProvider.KILO:
+            st.text_input(
+                "Kilo API Key",
                 type="password",
                 key="api_key",
                 on_change=lambda: save_to_storage("api_key", st.session_state.api_key),
@@ -238,10 +260,14 @@ async def main():
             )
 
 
-def validate_auth(provider: APIProvider, api_key: str | None):
+def validate_auth(provider: APIProvider | str, api_key: str | None):
+    provider = _coerce_provider(provider)
     if provider == APIProvider.ANTHROPIC:
         if not api_key:
             return "Enter your Anthropic API key in the sidebar to continue."
+    if provider == APIProvider.KILO:
+        if not api_key:
+            return "Enter your Kilo API key in the sidebar to continue."
     if provider == APIProvider.BEDROCK:
         import boto3
 

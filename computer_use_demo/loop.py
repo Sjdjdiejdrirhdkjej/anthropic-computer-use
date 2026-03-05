@@ -2,11 +2,13 @@
 Agentic sampling loop that calls the Anthropic API and local implementation of anthropic-defined computer use tools.
 """
 
+import os
 import platform
 from collections.abc import Callable
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, cast
+
+from .compat import StrEnum
 
 import httpx
 from anthropic import (
@@ -39,15 +41,27 @@ PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
 
 class APIProvider(StrEnum):
     ANTHROPIC = "anthropic"
+    KILO = "kilo"
     BEDROCK = "bedrock"
     VERTEX = "vertex"
 
 
 PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {
     APIProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
+    APIProvider.KILO: "claude-3-5-sonnet-20241022",
     APIProvider.BEDROCK: "anthropic.claude-3-5-sonnet-20241022-v2:0",
     APIProvider.VERTEX: "claude-3-5-sonnet-v2@20241022",
 }
+
+def normalize_provider(provider: APIProvider | str) -> APIProvider:
+    """Normalize raw provider values to ``APIProvider`` with validation."""
+    if isinstance(provider, APIProvider):
+        return provider
+    try:
+        return APIProvider(provider)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported API provider: {provider}") from exc
+
 
 
 # This system prompt is optimized for the Docker environment in this repository and
@@ -102,16 +116,25 @@ async def sampling_loop(
     )
 
     while True:
+        provider = normalize_provider(provider)
         enable_prompt_caching = False
         betas = [COMPUTER_USE_BETA_FLAG]
         image_truncation_threshold = 10
         if provider == APIProvider.ANTHROPIC:
             client = Anthropic(api_key=api_key)
             enable_prompt_caching = True
+        elif provider == APIProvider.KILO:
+            client = Anthropic(
+                api_key=api_key,
+                base_url=os.getenv("KILO_API_BASE_URL", "https://api.kilo.ai/anthropic"),
+            )
+            enable_prompt_caching = True
         elif provider == APIProvider.VERTEX:
             client = AnthropicVertex()
         elif provider == APIProvider.BEDROCK:
             client = AnthropicBedrock()
+        else:
+            raise ValueError(f"Unsupported API provider: {provider}")
 
         if enable_prompt_caching:
             betas.append(PROMPT_CACHING_BETA_FLAG)

@@ -3,8 +3,9 @@ import base64
 import os
 import shlex
 import shutil
-from enum import StrEnum
 from pathlib import Path
+
+from computer_use_demo.compat import StrEnum
 from typing import Literal, TypedDict
 from uuid import uuid4
 
