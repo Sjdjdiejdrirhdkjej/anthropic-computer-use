@@ -103,7 +103,23 @@ async def sampling_loop(
     max_tokens: int = 4096,
 ):
     """
-    Agentic sampling loop for the assistant/tool interaction of computer use.
+    Run the agentic sampling loop that sends the conversation and system prompt to the model, executes any tool uses returned by the model, and appends tool results back into the conversation.
+    
+    Parameters:
+        desktop (DesktopSandbox): Local sandbox used by tools for executing actions.
+        model (str): Model name to use for API requests.
+        provider (APIProvider | str): API provider or provider name to use; will be normalized.
+        system_prompt_suffix (str): Additional text appended to the system prompt.
+        messages (list[BetaMessageParam]): Current conversation message list that will be sent and mutated.
+        output_callback (Callable[[BetaContentBlockParam], None]): Called for each content block produced by the model.
+        tool_output_callback (Callable[[ToolResult, str], None]): Called with each ToolResult and its tool_use identifier after tool execution.
+        api_response_callback (Callable[[httpx.Request, httpx.Response | object | None, Exception | None], None]): Receives the raw HTTP request/response or exception for each API call.
+        api_key (str): API key or credential used to instantiate provider clients.
+        only_n_most_recent_images (int | None): If set, prune tool_result image blocks to retain only this many most recent images across the conversation.
+        max_tokens (int): Maximum token budget for the model request.
+    
+    Returns:
+        list[BetaMessageParam]: The updated conversation messages after processing the model response and any tool results.
     """
     tool_collection = ToolCollection(
         ComputerTool(desktop),
