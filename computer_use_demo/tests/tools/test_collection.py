@@ -8,20 +8,21 @@ from computer_use_demo.tools.base import BaseAnthropicTool, ToolError, ToolFailu
 from computer_use_demo.tools.collection import ToolCollection
 
 
+def _make_mock_tool(name: str) -> AsyncMock:
+    """Create a mock async tool with a given name."""
+    tool = AsyncMock(spec=BaseAnthropicTool)
+    tool.to_params.return_value = {"name": name, "type": f"{name}_type"}
+    tool.return_value = ToolResult(output=f"{name} result")
+    return tool
+
+
 class TestToolCollection:
     """Tests for ToolCollection."""
 
-    def _make_mock_tool(self, name: str) -> MagicMock:
-        """Create a mock tool with a given name."""
-        tool = MagicMock(spec=BaseAnthropicTool)
-        tool.to_params.return_value = {"name": name, "type": f"{name}_type"}
-        tool.__call__ = AsyncMock(return_value=ToolResult(output=f"{name} result"))
-        return tool
-
     def test_to_params_returns_list(self):
         """to_params should return a list of tool parameter dicts."""
-        tool_a = self._make_mock_tool("tool_a")
-        tool_b = self._make_mock_tool("tool_b")
+        tool_a = _make_mock_tool("tool_a")
+        tool_b = _make_mock_tool("tool_b")
         collection = ToolCollection(tool_a, tool_b)
         params = collection.to_params()
 
@@ -31,8 +32,8 @@ class TestToolCollection:
 
     def test_tool_map_populated_from_tools(self):
         """tool_map should map tool names to tool instances."""
-        tool_a = self._make_mock_tool("tool_a")
-        tool_b = self._make_mock_tool("tool_b")
+        tool_a = _make_mock_tool("tool_a")
+        tool_b = _make_mock_tool("tool_b")
         collection = ToolCollection(tool_a, tool_b)
 
         assert "tool_a" in collection.tool_map
@@ -42,20 +43,20 @@ class TestToolCollection:
     @pytest.mark.asyncio
     async def test_run_dispatches_to_correct_tool(self):
         """run() should call the tool matching the given name."""
-        tool_a = self._make_mock_tool("tool_a")
-        tool_b = self._make_mock_tool("tool_b")
+        tool_a = _make_mock_tool("tool_a")
+        tool_b = _make_mock_tool("tool_b")
         collection = ToolCollection(tool_a, tool_b)
 
         result = await collection.run(name="tool_a", tool_input={"key": "val"})
 
-        tool_a.__call__.assert_awaited_once_with(key="val")
-        tool_b.__call__.assert_not_awaited()
+        tool_a.assert_awaited_once_with(key="val")
+        tool_b.assert_not_awaited()
         assert result.output == "tool_a result"
 
     @pytest.mark.asyncio
     async def test_run_with_invalid_tool_name_returns_failure(self):
         """run() with an unknown tool name should return ToolFailure."""
-        tool_a = self._make_mock_tool("tool_a")
+        tool_a = _make_mock_tool("tool_a")
         collection = ToolCollection(tool_a)
 
         result = await collection.run(name="nonexistent", tool_input={})
@@ -67,8 +68,8 @@ class TestToolCollection:
     @pytest.mark.asyncio
     async def test_run_catches_tool_error(self):
         """run() should catch ToolError and return ToolFailure."""
-        tool = self._make_mock_tool("failing_tool")
-        tool.__call__ = AsyncMock(side_effect=ToolError("something broke"))
+        tool = _make_mock_tool("failing_tool")
+        tool.side_effect = ToolError("something broke")
         collection = ToolCollection(tool)
 
         result = await collection.run(name="failing_tool", tool_input={})
@@ -79,8 +80,8 @@ class TestToolCollection:
     @pytest.mark.asyncio
     async def test_run_does_not_catch_non_tool_errors(self):
         """run() should not catch exceptions other than ToolError."""
-        tool = self._make_mock_tool("crashy_tool")
-        tool.__call__ = AsyncMock(side_effect=RuntimeError("unexpected"))
+        tool = _make_mock_tool("crashy_tool")
+        tool.side_effect = RuntimeError("unexpected")
         collection = ToolCollection(tool)
 
         with pytest.raises(RuntimeError, match="unexpected"):
